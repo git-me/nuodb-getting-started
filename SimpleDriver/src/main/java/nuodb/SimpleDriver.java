@@ -224,6 +224,7 @@ public class SimpleDriver {
 
 	    private final int id;
         private final String sql;
+        private final String verb;
         private final DataSource dataSource;
         private final CountDownLatch latch;
         private final AtomicLongArray stats;
@@ -238,6 +239,12 @@ public class SimpleDriver {
         private final float desaturation;
         private final boolean iterate;
 
+        private static final String SELECT = "SELECT";
+        private static final String INSERT = "INSERT";
+        private static final String UPDATE = "UPDATE";
+        private static final String DELETE = "DELETE";
+        private static final String EXECUTE = "EXECUTE";
+
         private final List<ValueGenerator> param = new ArrayList<>(16);
 
         /**
@@ -250,6 +257,7 @@ public class SimpleDriver {
             catch (InterruptedException interrupt) {}
 
 	        int retry = 0;
+            int teId = -1;
 
             stats.compareAndSet(STATS_START_TIME, 0, System.nanoTime());
 
@@ -257,7 +265,6 @@ public class SimpleDriver {
             while (System.currentTimeMillis() < timeout) {
 
                 // keep a whole lot of stats
-		        int teId = -1;
                 int count = 0;
                 long inactive = 0;
                 long response = 0;
@@ -269,22 +276,45 @@ public class SimpleDriver {
 
                 try (Connection conn = dataSource.getConnection()) {
 
+                    teId = com.nuodb.jdbc.Connection.class.cast(conn).getConnectedNodeId();
                     conn.setAutoCommit(false);
 
-                    try (PreparedStatement sql = conn.prepareStatement(this.sql)) {
-
-                        teId = com.nuodb.jdbc.Connection.class.cast(conn).getConnectedNodeId();
+                    try (PreparedStatement sql = conn.prepareStatement(this.sql, (verb.equals(INSERT) ? Statement.RETURN_GENERATED_KEYS : Statement.NO_GENERATED_KEYS))) {
 
                         for (int qx = 0; qx < queryPerTx; qx++) {
 
                             setParams(sql);
 
-                            start = System.nanoTime();
-                            ResultSet rs = sql.executeQuery();
-                            response += System.nanoTime() - start;
+                            switch (verb) {
 
-                            while (iterate && rs.next()) {
-                                count++;
+                                case SELECT:
+                                {
+                                    start = System.nanoTime();
+                                    ResultSet rs = sql.executeQuery();
+                                    response += System.nanoTime() - start;
+
+                                    while (iterate && rs.next()) {
+                                        count++;
+                                    }
+                                }
+                                break;
+
+                                case INSERT:
+                                case UPDATE:
+                                case DELETE:
+                                    start = System.nanoTime();
+                                    int rowCount = sql.executeUpdate();
+                                    response += System.nanoTime() - start;
+                                    break;
+
+                                case EXECUTE:
+                                    start = System.nanoTime();
+                                    sql.execute();
+                                    response += System.nanoTime() - start;
+                                    break;
+
+                                default:
+                                    throw new RuntimeException("Unrecognised verb: " + verb);
                             }
 
                             time = System.nanoTime() - start;
@@ -335,10 +365,10 @@ public class SimpleDriver {
                     stats.set(STATS_END_TIME, end);
                 }
                 catch (SQLTransientConnectionException transientFailure) {
-                    log.info(String.format("Communication failed with TE %d - failing over...\n\t%s", teId, transientFailure.toString()));
+                    log.info(String.format("Communication ceased - TE %d no longer contactable. Automatically continuing with replacement TE (auto-failover)...\n\t%s", teId, transientFailure.toString()));
                 }
                 catch (SQLNonTransientConnectionException nonTransientFailure) {
-                    log.info(String.format("Error making initial connection - retrying...\n\t%s", nonTransientFailure.toString()));
+                    log.info(String.format("Unable to establish initial connection - retrying...\n\t%s", nonTransientFailure.toString()));
 
 		            retry++;
 	  	            if (retry > 3) {
@@ -350,7 +380,7 @@ public class SimpleDriver {
 		            catch (InterruptedException interrupted) {}
                 }
                 catch (SQLException queryFailure) {
-                    log.severe(String.format("Error executing sql %s on TE %d\n\t%s", sql, teId, queryFailure.toString()));
+                    log.severe(String.format("Error executing sql >>%s<< on TE %d\n\t%s", sql, teId, queryFailure.toString()));
 		            break;
                 }
                 catch (Exception nonSqlError) {
@@ -398,6 +428,13 @@ public class SimpleDriver {
             sql = (newSql.length() > 0 ? newSql.toString() : sqlText);
 
             log.finer(String.format("Query rewritten to: %s", sql));
+
+            Matcher sqlVerb = verbPattern.matcher(sql);
+            if (sqlVerb.find()) {
+                verb = sqlVerb.group(1).toUpperCase();
+            } else {
+                throw new IllegalArgumentException(String.format("Could not parse VERB from sql %s", sql));
+            }
 
             long duration = 1000 * Long.parseLong(getOption(props, Opt.TIME));
             timeout = System.currentTimeMillis() + duration;
@@ -591,11 +628,14 @@ public class SimpleDriver {
         Properties props = new Properties();
 
         // iterate the command arguments
+        Matcher compoundArg;
         String name = null;
+        String value;
+
         for (String arg : args) {
 
             // arg begins with '-', so it's an option name
-            if (arg.charAt(0) == '-' || arg.contains("=")) {
+            if (arg.charAt(0) == '-') {
                 if (name != null) {
                     props.setProperty(name, "true");
                 }
@@ -603,21 +643,32 @@ public class SimpleDriver {
                 if (arg.charAt(0) == '-')
                     arg = arg.substring(1);
 
-                String[] nameValue = propertyPattern.split(arg);
-                try { name = Opt.valueOf(nameValue[0].trim().toUpperCase()).toString(); }
-                catch (Exception invalidOption) {
-                    throw new IllegalArgumentException(String.format("Invalid option: %s", nameValue[0]));
+                compoundArg = propertyPattern.matcher(arg);
+                if (compoundArg.find()) {
+                    name = compoundArg.group(1);
+                    value = compoundArg.group(2);
+                }
+                else {
+                    name = arg;
+                    value = null;
                 }
 
-                if (nameValue.length > 1) {
+                try { Opt.valueOf(name.trim().toUpperCase()); }
+                catch (Exception invalidOption) {
+                    throw new IllegalArgumentException(String.format("Invalid option: %s%n%s", name, invalidOption.toString()));
+                }
 
-                    String value = nameValue[1].trim();
+                if (value != null) {
 
                     if (name.equals(Opt.PROPERTY.toString())) {
-                        nameValue = value.split(":");
+                        compoundArg = propertyPattern.matcher(value);
 
-                        name = nameValue[0].trim();
-                        value = (nameValue.length > 1 ? nameValue[1] : "true");
+                        name = compoundArg.group(1);
+                        value = compoundArg.group(2);
+
+                        if (value == null || value.length() == 0) {
+                            value = "true";
+                        }
                     }
 
                     props.setProperty(name, value);
@@ -628,13 +679,19 @@ public class SimpleDriver {
             // arg comes immediately after an option name
             else if (name != null) {
 
-                String value = arg;
+                value = arg;
 
                 if (name.equals(Opt.PROPERTY.toString())) {
-                    String[] nameValue = arg.split(":");
+                    compoundArg = propertyPattern.matcher(value);
 
-                    name = nameValue[0].trim();
-                    value = (nameValue.length > 1 ? nameValue[1].trim() : "true");
+                    if (compoundArg.find()) {
+                        name = compoundArg.group(1);
+                        value = compoundArg.group(2);
+
+                        if (value == null || value.length() == 0) {
+                            value = "true";
+                        }
+                    }
                 }
 
                 props.setProperty(name, value);
@@ -1329,7 +1386,9 @@ public class SimpleDriver {
 
     /** compiled patterns for matching and splitting text */
     private static final Pattern paramPattern = Pattern.compile("\\?(\\{[^{]+\\})?");
-    private static final Pattern propertyPattern = Pattern.compile("=");
+
+    private static final Pattern verbPattern = Pattern.compile("^([^ ]+) +.+");
+    private static final Pattern propertyPattern = Pattern.compile("^([^=: ]+)[=:](.+)$");
     private static final Pattern formatPattern = Pattern.compile(" *; *");
     private static final Pattern variableReferencePattern = Pattern.compile("\\$\\{([^\\}]+)\\}");
 
