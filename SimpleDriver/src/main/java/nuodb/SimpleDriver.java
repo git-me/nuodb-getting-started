@@ -30,7 +30,7 @@ import java.util.regex.Pattern;
  *   <li>-url         -> the JDBC connection URL - no default, required.
  *      <br>Example: jdbc:com.nuodb://localhost/testdb
  *   </li>
- *   <li>-user        -> the authenticatin USER for the database connection - no default, required
+ *   <li>-user        -> the authentication USER for the database connection - no default, required
  *   </li>
  *   <li>-password    -> the password for the authentication USER - no default, required
  *   </li>
@@ -41,14 +41,14 @@ import java.util.regex.Pattern;
  *   <li>-batch       -> the number of statements to batch into each commit - default=1
  *   </li>
  *   <li>-rate        -> the target rate of transactions per second - optional.
- *      <br>The load will be adjusted to maintain the specified transaction rate.
+ *      <br>The workload will be adjusted to maintain the specified transaction rate.
  *      <br>The SQL task will sleep as necessary to match the current transaction rate to the specified target rate.
- *      <br>Rate helps answer the question: "Can this configuration support this load?"
+ *      <br>-rate helps answer the question: "Can this configuration support this load?"
  *   </li>
- *   <li>-saturate    -> the target percentage saturation for SQL statements - default=95.
- *      <br>The workload includes a calculated wait-time to keep the database busy at the specified saturation percentage.
- *      <br>The SQL task will sleep for a time equal to (query-time) x (1.0-saturate).
- *      <br>Saturate helps answer the question: "What is the maximum load this configuration can support?"
+ *   <li>-load    -> the target database load factor percentage for SQL statements - default=95(%).
+ *      <br>The workload includes a calculated wait-time to keep the database busy at the specified load percentage.
+ *      <br>The SQL task will sleep for a time equal to (query-time) x (1.0-load).
+ *      <br>-load helps answer the question: "What is the maximum load this configuration can support?"
  *   </li>
  *   <li>-report      -> time period in seconds to report statistics - default=1
  *   </li>
@@ -56,12 +56,12 @@ import java.util.regex.Pattern;
  *      <br>An option set on the command-line overrides an option from file.
  *      <br>Option names in file do not have a '-' prefix, they can also be specified simply as name=value.
  *   </li>
- *   <li>-property    -> add a name:value pair to the set of properties - optional.
- *      <br>Format is name:value
+ *   <li>-property    -> add a name/value pair to the set of properties - optional.
+ *      <br>Format is name=value -or- name:value
  *      <br>Use this to set a property for which there is no command-line switch, but which is needed
  *      <br>  for the database properties, or variable resolution, etc.
- *      <br>Example: -property schema:User would cause "schema=User" to be passed to to the Driver when connecting to the database;
- *      <br>and for some other property to have a value such as: ${schema}.table, which would be resolved to User.table.
+ *      <br>Example: -property schema=User would cause "schema=User" to be passed to the Driver when connecting to the database;
+ *      <br>and for some other property with a value such as: ${schema}.table, to be resolved as User.table.
  *   </li>
  *   <li>-logging     -> path to a Java Logging config file - optional.
  *      <br>See the Java documentation on the values for this file.
@@ -73,11 +73,11 @@ import java.util.regex.Pattern;
  *   </li>
  *   <li>-iterate     -> enable/disable iteration through all rows of each query - default=false.
  *   </li>
- *   <li>-iterate=false helps enswer the question: "what is the throughput of the database?"
+ *   <li>-iterate=false helps answer the question: "what is the throughput of the database?"
  *   </li>
- *   <li>-iterate=true helps answer the question: "what is the throughput of the aplication?"
+ *   <li>-iterate=true helps answer the question: "what is the throughput of the application?"
  *   </li>
- *   <li>-sql         -> the SQL statement to run on the SQL thread(s) - default=SELECT * from User.Teams where year <?{int,1910,2010}
+ *   <li>-sql         -> the SQL statement to run on the SQL thread(s) - default=SELECT * from User.Teams where year < ?{int,1910,2010}
  *   </li>
  *   <li>-params      -> Specification for the generation of values for parameter references in the SQL statement. optional
  *   </li>
@@ -87,21 +87,21 @@ import java.util.regex.Pattern;
  * </ul>
  *
  *   <br> Parameter specifications are separated by semicolons, and each is in the form
- *   <br> {type,format,first,last,parseFormat} where:
+ *   <br> {type,format,X,Y,parseFormat} where:
  * <ul>
  *   <li>- type is one of [int, long, string, boolean, date, value];
  *   </li>
  *   <li>- format is a sprintf-style format specification, or can be omitted completely
  *   </li>
- *   <li>- (first and last) define the range of generated values:
+ *   <li>- (X and Y) define the range of generated values:
  * <ul>
- *   <li>- int, long, date: the first and last in the value range;
+ *   <li>- int, long, date: the first (X) and last (Y) in the value range;
  *   </li>
- *   <li>- string: shortest and longest string length;
+ *   <li>- string: shortest (X) and longest (Y) string length;
  *   </li>
- *   <li>- boolean - first is the relative percentage of <em>true</em> values (default=50);
+ *   <li>- boolean - X is the relative percentage of <em>true</em> values (default=50);
  *   </li>
- *   <li>- value: first => first valid line (first=1 => skip first line); last => column number;
+ *   <li>- value: X => first valid line (X=1 => skip first line); Y => column number;
  * </ul>
  *
  *   </li>
@@ -133,7 +133,7 @@ import java.util.regex.Pattern;
  *      <br>generate a random date between Jan 1 1910 and Dec 31 2011, formatted with %tc.
  *   </li>
  *   <li>-{value,1,0}
- *      <br>value - retrieve a random line from the loaded data file; ignore the first line (first=1); and use the 0th column (last=0) from that line;
+ *      <br>value - retrieve a random line from the loaded data file; ignore the first line (X=1); and use the 0th column (Y=0) from that line;
  * </ul>
  *
  *<p></p>
@@ -192,7 +192,7 @@ public class SimpleDriver {
 
             DataSource dataSource = new com.nuodb.jdbc.DataSource(props);
             executor = Executors.newCachedThreadPool();
-            AtomicLongArray stats = new AtomicLongArray(9);
+            AtomicLongArray stats = new AtomicLongArray(11);
 
             int threadCount = Integer.parseInt(getOption(props, Opt.THREADS));
 
@@ -329,7 +329,13 @@ public class SimpleDriver {
                         stats.addAndGet(STATS_ROW_COUNT, count);
 
                         log.finer(String.format("Completed %d queries in task %d on TE %d in %.2fms; total=%d", queryPerTx, id, teId, NANO_TO_MILLIS * response, current));
-                     }
+                    }
+                    catch (SQLTransactionRollbackException rolledBack) {
+                        log.finer(String.format("Conflict executing sql >>%s<< on TE %d\n\t%s", sql, teId, rolledBack.toString()));
+                        conn.rollback();
+                        stats.incrementAndGet((rolledBack.toString().contains("deadlock") ? STATS_ABORT_DEADLOCK : STATS_ABORT_CONFLICT));
+                        continue;
+                    }
 
                     // commit the batch
                     start = System.nanoTime();
@@ -380,7 +386,7 @@ public class SimpleDriver {
 		            catch (InterruptedException interrupted) {}
                 }
                 catch (SQLException queryFailure) {
-                    log.severe(String.format("Error executing sql >>%s<< on TE %d\n\t%s", sql, teId, queryFailure.toString()));
+                    log.severe(String.format("Error committing sql >>%s<< on TE %d\n\t%s", sql, teId, queryFailure.toString()));
 		            break;
                 }
                 catch (Exception nonSqlError) {
@@ -449,7 +455,7 @@ public class SimpleDriver {
             targetOpTime = (long) (txRate > 0 ? (targetTxTime / queryPerTx) : 0);
             log.finer(String.format("targetTxTime=%.2fms; targetOpTime=%.2f", NANO_TO_MILLIS * targetTxTime, NANO_TO_MILLIS * targetOpTime));
 
-            int satPcnt = Integer.parseInt(getOption(props, Opt.SATURATE));
+            int satPcnt = Integer.parseInt(getOption(props, Opt.LOAD));
             desaturation = (satPcnt > 0 && satPcnt < 100 ? (100.0f - satPcnt) / satPcnt : 0.0f);
             log.finer(String.format("saturation = %d%%; desaturation=%.2f", satPcnt, desaturation));
 
@@ -551,8 +557,15 @@ public class SimpleDriver {
             double aveLatency = stats.get(STATS_LATENCY_TIME) / opCount;
             double aveTx = stats.get(STATS_TX_TIME) / txCount;
 
+            long conflict = stats.get(STATS_ABORT_CONFLICT);
+            long deadlock = stats.get(STATS_ABORT_DEADLOCK);
+
             report.info(String.format("Total statements=%,d; elapsed=%.2fms (sleep=%.3fms); rows=%,d; rate=%.2fop/s; ave latency=%.2fms; ave tx=%.2fms;",
                     opCount, NANO_TO_MILLIS * totalTime, NANO_TO_MILLIS * (inactive / threadCount), rowCount, ops, NANO_TO_MILLIS * aveLatency, NANO_TO_MILLIS * aveTx));
+
+            if (conflict > 0 || deadlock > 0) {
+                report.info(String.format("* Total Rollbacks=%d; Deadlock=%d; other=%d", deadlock + conflict, deadlock, conflict));
+            }
         }
 
         /**
@@ -806,13 +819,13 @@ public class SimpleDriver {
                     rate * time, threads));
 
         int saturation = -1;
-        if (props.containsKey(Opt.SATURATE.toString())) {
-            saturation = Integer.parseInt(props.getProperty(Opt.SATURATE.toString()));
+        if (props.containsKey(Opt.LOAD.toString())) {
+            saturation = Integer.parseInt(props.getProperty(Opt.LOAD.toString()));
             if (saturation <= 0 || saturation > 100)
                 throw new IllegalArgumentException("Value for -saturation must be between 1 and 100 inclusive");
         }
         else if (rate <= 0) {
-            log.info(String.format("Saturation defaulting to %s%%", Opt.SATURATE.defaultValue));
+            log.info(String.format("Saturation defaulting to %s%%", Opt.LOAD.defaultValue));
         }
 
         if (rate > 0 && saturation > 0) {
@@ -1274,31 +1287,31 @@ public class SimpleDriver {
         URL(null, "the JDBC connection URL - no default, required."
                 + "\nExample: jdbc:com.nuodb://localhost/testdb"
         ),
-        USER(null, "the authenticating USER for the database connection - no default, required"),
+        USER(null, "the authentication USER for the database connection - no default, required"),
         PASSWORD(null, "the password for the authentication USER - no default, required"),
         THREADS("10", "the number of SQL threads to run - %s"),
-        TIME("1", "the time in seconds to run the load - %s"),
+        TIME("1", "the time in seconds to run the workload - %s"),
         BATCH("1", "the number of statements to batch into each commit - %s"),
         RATE(null, "the target rate of transactions per second - %s."
-                + "\nThe load will be adjusted to maintain the specified transaction rate."
+                + "\nThe workload will be adjusted to maintain the specified transaction rate."
                 + "\nThe SQL task will sleep as necessary to match the current transaction rate to the specified target rate."
-                + "\nRate helps answer the question: \"Can this configuration support this load?\""
+                + "\n-rate helps answer the question: \"Can this configuration support this load?\""
         ),
-        SATURATE("95", "the target percentage saturation for SQL statements - %s."
-                + "\nThe workload includes a calculated wait-time to keep the database busy at the specified saturation percentage."
-                + "\nThe SQL task will sleep for a time equal to (query-time) x (1.0-saturate)."
-                + "\nSaturate helps answer the question: \"What is the maximum load this configuration can support?\""
+        LOAD("95", "the target percentage database load from the SQL statements - %s."
+                + "\nThe workload includes a calculated wait-time to keep the database busy at the specified load percentage."
+                + "\nThe SQL task will sleep for a time equal to (query-time) x (1.0-load)."
+                + "\n-load helps answer the question: \"What is the maximum load this configuration can support?\""
         ),
         REPORT("1", "time period in seconds to report statistics - %s"),
         CONFIG(null, "path to a config file in Java Properties file format - %s."
                 + "\nAn option set on the command-line overrides an option from file."
                 + "\nOption names in file do not have a '-' prefix, they are specified simply as name=value."
         ),
-        PROPERTY(null, "add a name:value pair to the set of properties - %s.\nFormat is name:value"
+        PROPERTY(null, "add a name/value pair to the set of properties - %s.\nFormat is name=value or name:value"
                 + "\nUse this to set a property for which there is no command-line switch, but which is needed"
                 + "\n  for the database properties, or variable resolution, etc."
-                + "\nExample: -property schema:User would cause \"schema=User\" to be included in the properties passed to the database Driver;"
-                + "\n  and for some other property to have a value such as: ${schema}.table, which would be resolved to User.table."
+                + "\nExample: -property schema=User would cause \"schema=User\" to be included in the properties passed to the database Driver;"
+                + "\n  and for some other property with a value such as: ${schema}.table, to be resolved to User.table."
         ),
         LOGGING(null, "path to a Java Logging config file - %s.\nSee the Java documentation on the values for this file."),
         DATA(null, "path to a data file to use for query parameter values - %s."
@@ -1310,7 +1323,9 @@ public class SimpleDriver {
                 + "\n-iterate=false helps answer the question: \"what is the throughput of the database?\""
                 + "\n-iterate=true helps answer the question: \"what is the throughput of the application?\""
         ),
-        SQL("SELECT * from User.Teams where year <?{int,1910,2010}", "the SQL statement to run on the SQL thread(s) - %s"),
+        SQL("SELECT * from User.Teams where year < ?{int,1910,2010}", "the SQL statement to run on the SQL thread(s) - %s"
+                + "\nNote that other statements such as INSERT, UPDATE, DELETE and EXECUTE are also supported."
+        ),
         PARAMS(null, "Specification for the generation of values for parameter references in the SQL statement. %s"),
         CHECK("false", "show the resolved values for options - %s"),
         HELP("false", "show this help text and exit - %s");
@@ -1331,14 +1346,14 @@ public class SimpleDriver {
     /** The static text of the HELP explanation */
     private static final String HELP_EXPLANATION =
             "   Parameter specifications are separated by semicolons, and each is in the form\n"
-                    + "   {type,format,first,last,parseFormat} where:\n"
+                    + "   {type,format,X,Y,parseFormat} where:\n"
                     + "      - type is one of [int, long, string, boolean, date, value];\n"
-                    + "      - format is a sprintf-style format specification, or can be omitted completely\n"
-                    + "      - (first and last) define the range of generated values:\n"
-                    + "         - int, long, date: the first and last in the value range;\n"
+                    + "      - format is a sprintf-style format specification; or can be omitted completely\n"
+                    + "      - (X and Y) define the range of generated values:\n"
+                    + "         - int, long, date: the first (X) and last (Y) in the value range;\n"
                     + "         - string: shortest and longest string length;\n"
-                    + "         - boolean - first is the relative percentage of true values (default=50);\n"
-                    + "         - value: first => first valid line (first=1 => skip first line); last => column number;\n\n"
+                    + "         - boolean - X is the relative percentage of true values (default=50);\n"
+                    + "         - value: X => first valid line (X=1 => skip first line); Y => column number;\n\n"
                     + "      - parseFormat is a parse string specific to the parameter type for parsing string-values.\n"
                     + "         - currently this only has an effect for 'date' type, where it is format string for a SimpleDateFormat.\n"
                     + " \nExamples:\n"
@@ -1357,7 +1372,7 @@ public class SimpleDriver {
                     + "      -{date,%tc,1910/1/1,2011/12/31,yyyy/MM/dd}\n"
                     + "       generate a random date between Jan 1 1910 and Dec 31 2011, formatted with %tc.\n"
                     + "      -{value,1,0}\n"
-                    + "       value - retrieve a random line from the loaded data file; ignore the first line (first=1); and use the 0th column (last=0) from that line;\n\n"
+                    + "       value - retrieve a random line from the loaded data file; ignore the first line (X=1); and use the 0th column (Y=0) from that line;\n\n"
                     + " \nEvery '?' in the SQL is replaced by a value generated according to the corresponding format specifier.\n"
                     + " \nNote also that if you need only change the log output format, then Java allows you to provide the\n"
                     + "     \"java.util.logging.SimpleFormatter.format\" option in the Java options\n"
@@ -1377,6 +1392,8 @@ public class SimpleDriver {
     private static final int STATS_INACTIVE_TIME     = 6;
     private static final int STATS_OPS_TIME          = 7;
     private static final int STATS_TX_TIME           = 8;
+    private static final int STATS_ABORT_CONFLICT    = 9;
+    private static final int STATS_ABORT_DEADLOCK    =10;
 
     /** constants for time calculations */
     private static final double NANO_TO_MILLIS = 1.0d / 1000000;
