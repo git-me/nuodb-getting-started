@@ -1,4 +1,12 @@
 .DS_Store
-.classes
+Thumbs.db
+
+.classpath
 .project
 .settings
+.dea
+.gradle
+.vscode
+
+target/
+build/
