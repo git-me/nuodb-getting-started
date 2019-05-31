@@ -216,10 +216,19 @@ public class SimpleDriver {
 	public static void main(String[] args) {
 		ExecutorService executor = null;
 
+		if (args.length == 0)
+			args = new String[] { "-h" };
+
+		for (int i = 0; i < args.length; i++) {
+			String arg = args[i];
+			if (arg.startsWith("--"))
+				args[i] = arg.substring(1);
+		}
+
 		try {
 			Properties props = configureApp(args);
 
-			if (props.size() == 0) {
+			if (props == null || props.size() == 0) {
 				System.out.println("No command-line options, using default.properties");
 				props = mergePropertiesFile(props, "default.properties");
 			}
@@ -242,6 +251,7 @@ public class SimpleDriver {
 			throw oops;
 		} catch (Exception failure) {
 			System.err.println("Fatal error - exiting: " + failure.toString());
+			failure.printStackTrace();
 		} finally {
 			try {
 				executor.shutdown();
@@ -663,16 +673,8 @@ public class SimpleDriver {
 			System.out.println(String.format("Properties set: %s", props));
 		}
 
-		String helpOption = getOption(props, Opt.HELP);
-		if (!helpOption.equals("false")) {
-			if (helpOption.startsWith("javadoc:")) {
-				writeJavadoc(helpOption.substring("javadoc:".length()));
-			} else {
-				System.out.println(getHelp());
-			}
-
-			return null;
-		}
+		checkForHelp(props, Opt.HELP);
+		checkForHelp(props, Opt.H);
 
 		if (props.size() == 0) {
 			props = mergePropertiesFile(props, "default.properties");
@@ -686,6 +688,20 @@ public class SimpleDriver {
 		}
 
 		return props;
+	}
+
+	private static void checkForHelp(Properties props, Opt option) {
+		String helpOption = getOption(props, option);
+
+		if (!helpOption.equals("false")) {
+			if (helpOption.startsWith("javadoc:")) {
+				writeJavadoc(helpOption.substring("javadoc:".length()));
+			} else {
+				System.out.println(getHelp());
+			}
+
+			System.exit(0);
+		}
 	}
 
 	/**
@@ -1233,7 +1249,7 @@ public class SimpleDriver {
 						}
 					}
 				}
-				
+
 				log.fine(String.format("Read %d lines from file %s", data.size(), fileName));
 			} catch (IOException ioError) {
 				throw new RuntimeException(String.format("Error reading values file %s", fileName), ioError);
@@ -1327,7 +1343,7 @@ public class SimpleDriver {
 	 * @return the help text as a String.
 	 */
 	private static String getHelp() {
-		String spaces = "          ";
+		String spaces = "            ";
 
 		StringBuilder optHelp = new StringBuilder(1024);
 		optHelp.append("Usage: java ").append(className).append(" [-option[=| ]value] [-option ...]");
@@ -1413,7 +1429,8 @@ public class SimpleDriver {
 				"the SQL statement to run on the SQL thread(s) - %s"
 						+ "\nNote that other statements such as INSERT, UPDATE, DELETE and EXECUTE are also supported."),
 		PARAMS(null, "Specification for the generation of values for parameter references in the SQL statement. %s"),
-		CHECK("false", "show the resolved values for options - %s"), HELP("false", "show this help text and exit - %s");
+		CHECK("false", "show the resolved values for options - %s"), //
+		HELP("false", "show this help text and exit - %s"), H("false", "show this help text and exit - %s");
 
 		private String defaultValue;
 		private String description;
